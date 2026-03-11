@@ -9,35 +9,37 @@ const userRoutes = require("./routes/userRoutes");
 
 const { apiLimiter, authLimiter } = require("./middleware/rateLimiter");
 
-
 const app = express();
 
-// Add CORS middleware BEFORE other middleware
+// CORS middleware
 app.use(cors({
   origin: [
     'http://localhost:5173',
-    'https://dashnote.vercel.app'  // ⭐ ADD THIS
+    'https://dashnote.vercel.app'
   ],
   credentials: true
 }));
 
 app.use(express.json());
 
-// ⭐ NEW: Apply rate limiting to all API routes
+// Rate limiting
 app.use("/api/", apiLimiter);
 
-
+// MongoDB connection
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB Atlas connected"))
   .catch((err) => console.error(err));
 
-
-app.use("/auth", authLimiter, authRoutes); // ⭐ Auth routes get stricter limit
-app.use("/auth", authRoutes);
+// Routes (no duplicates!)
+app.use("/auth", authLimiter, authRoutes);
 app.use("/api/notes", noteRoutes);
 app.use("/api/users", userRoutes);
 
+// Optional: Root route
+app.get('/', (req, res) => {
+  res.json({ message: "Dashnote API is running! 🚀" });
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
