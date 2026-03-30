@@ -1,146 +1,157 @@
-const bcrypt = require("bcryptjs");
-const jwt = require("jsonwebtoken");
-const crypto = require("crypto"); // ADD THIS
-const User = require("../models/User");
-const { sendPasswordResetEmail } = require("../utils/emailService"); // ADD THIS
+const nodemailer = require("nodemailer");
 
-const register = async (req, res) => {
+// Send password reset email
+const sendPasswordResetEmail = async (email, resetToken) => {
   try {
-    const { name, email, password } = req.body;
-
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "All fields required" });
+    // Validate environment variables
+    if (!process.env.EMAIL_USER) {
+      console.error("❌ EMAIL_USER is not set!");
+      throw new Error("EMAIL_USER environment variable is not configured");
+    }
+    
+    if (!process.env.EMAIL_PASSWORD) {
+      console.error("❌ EMAIL_PASSWORD is not set!");
+      throw new Error("EMAIL_PASSWORD environment variable is not configured");
+    }
+    
+    if (!process.env.FRONTEND_URL) {
+      console.error("❌ FRONTEND_URL is not set!");
+      throw new Error("FRONTEND_URL environment variable is not configured");
     }
 
-    const userExists = await User.findOne({ email });
-    if (userExists) {
-      return res.status(400).json({ message: "User already exists" });
-    }
+    console.log("✅ Environment variables check:");
+    console.log("  - EMAIL_USER:", process.env.EMAIL_USER);
+    console.log("  - EMAIL_PASSWORD:", process.env.EMAIL_PASSWORD ? "Set (hidden)" : "NOT SET");
+    console.log("  - FRONTEND_URL:", process.env.FRONTEND_URL);
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      name,
-      email,
-      password: hashedPassword,
-    });
-
-    res.status(201).json({
-      message: "User registered",
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
+    // Create transporter with better config
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASSWORD.replace(/\s/g, ''), // Remove any spaces
       },
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: "Invalid credentials" });
-    }
-
-    const token = jwt.sign(
-      { id: user._id },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
-
-    res.json({
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-      },
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-};
-
-// NEW: Forgot Password
-const forgotPassword = async (req, res) => {
-  try {
-    const { email } = req.body;
-
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(404).json({ msg: "No account with that email exists" });
-    }
-
-    // Generate reset token
-    const resetToken = crypto.randomBytes(32).toString("hex");
-
-    // Hash token and set expiry (1 hour)
-    user.resetPasswordToken = crypto
-      .createHash("sha256")
-      .update(resetToken)
-      .digest("hex");
-    user.resetPasswordExpire = Date.now() + 3600000; // 1 hour
-
-    await user.save();
-
-    // Send email
-    await sendPasswordResetEmail(email, resetToken);
-
-    res.json({ msg: "Password reset email sent" });
-  } catch (error) {
-    console.error("Forgot password error:", error);
-    res.status(500).json({ msg: "Server error. Could not send reset email." });
-  }
-};
-
-// NEW: Reset Password
-const resetPassword = async (req, res) => {
-  try {
-    const { password } = req.body;
-    const { token } = req.params;
-
-    // Hash the token from URL
-    const resetPasswordToken = crypto
-      .createHash("sha256")
-      .update(token)
-      .digest("hex");
-
-    // Find user with valid token
-    const user = await User.findOne({
-      resetPasswordToken,
-      resetPasswordExpire: { $gt: Date.now() },
+      debug: true, // Enable debug output
+      logger: true, // Log to console
     });
 
-    if (!user) {
-      return res.status(400).json({ msg: "Invalid or expired reset token" });
-    }
+    // Verify transporter configuration
+    console.log("🔍 Verifying email configuration...");
+    await transporter.verify();
+    console.log("✅ Email transporter verified successfully");
 
-    // Hash new password
-    const hashedPassword = await bcrypt.hash(password, 10);
-    user.password = hashedPassword;
+    const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-    // Clear reset token fields
-    user.resetPasswordToken = undefined;
-    user.resetPasswordExpire = undefined;
+    const mailOptions = {
+      from: `"Dashnote" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: "Password Reset - Dashnote",
+      html: `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
+          <div style="text-align: center; margin-bottom: 30px;">
+            <h1 style="color: #171717; font-weight: 300; font-size: 28px;">Dashnote</h1>
+          </div>
+          
+          <div style="background-color: #f9fafb; border-radius: 12px; padding: 30px;">
+            <h2 style="color: #171717; margin-top: 0;">Reset Your Password</h2>
+            <p style="color: #4b5563; line-height: 1.6;">
+              You requested to reset your password for your Dashnote account.
+            </p>
+            <p style="color: #4b5563; line-height: 1.6;">
+              Click the button below to reset your password:
+            </p>
+            
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${resetUrl}" 
+                 style="display: inline-block; 
+                        padding: 14px 32px; 
+                        background-color: #171717; 
+                        color: white; 
+                        text-decoration: none; 
+                        border-radius: 8px;
+                        font-weight: 500;">
+                Reset Password
+              </a>
+            </div>
+            
+            <p style="color: #6b7280; font-size: 14px; line-height: 1.6;">
+              Or copy and paste this link in your browser:
+            </p>
+            <p style="color: #9ca3af; 
+                      font-size: 12px; 
+                      word-break: break-all; 
+                      background-color: white; 
+                      padding: 12px; 
+                      border-radius: 6px;
+                      border: 1px solid #e5e7eb;">
+              ${resetUrl}
+            </p>
+          </div>
+          
+          <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
+            <p style="color: #9ca3af; font-size: 12px; margin: 0; line-height: 1.6;">
+              This link will expire in 1 hour. If you didn't request this password reset, 
+              please ignore this email and your password will remain unchanged.
+            </p>
+          </div>
+          
+          <div style="text-align: center; margin-top: 20px;">
+            <p style="color: #9ca3af; font-size: 11px; margin: 0;">
+              © ${new Date().getFullYear()} Dashnote. All rights reserved.
+            </p>
+          </div>
+        </div>
+      `,
+      text: `
+        Reset Your Password - Dashnote
+        
+        You requested to reset your password for your Dashnote account.
+        
+        Click the link below to reset your password:
+        ${resetUrl}
+        
+        This link will expire in 1 hour.
+        
+        If you didn't request this password reset, please ignore this email.
+        
+        © ${new Date().getFullYear()} Dashnote
+      `,
+    };
 
-    await user.save();
+    console.log("📧 Sending email to:", email);
+    const info = await transporter.sendMail(mailOptions);
+    
+    console.log("✅ Password reset email sent successfully!");
+    console.log("  - Message ID:", info.messageId);
+    console.log("  - To:", email);
+    console.log("  - Reset URL:", resetUrl);
 
-    res.json({ msg: "Password reset successful" });
+    return info;
+
   } catch (error) {
-    console.error("Reset password error:", error);
-    res.status(500).json({ msg: "Server error" });
+    console.error("❌ DETAILED EMAIL ERROR:");
+    console.error("  - Error message:", error.message);
+    console.error("  - Error code:", error.code);
+    console.error("  - Error name:", error.name);
+    console.error("  - Full error:", error);
+
+    // Provide specific error messages
+    if (error.code === "EAUTH") {
+      console.error("⚠️  Authentication failed - Check your Gmail App Password!");
+      throw new Error("Email authentication failed. Please check EMAIL_USER and EMAIL_PASSWORD environment variables.");
+    } else if (error.code === "ESOCKET") {
+      console.error("⚠️  Network error - Cannot connect to Gmail servers!");
+      throw new Error("Network error. Unable to connect to email server.");
+    } else if (error.message.includes("Invalid login")) {
+      console.error("⚠️  Invalid credentials - Gmail rejected the login!");
+      throw new Error("Invalid email credentials. Please regenerate your Gmail App Password.");
+    } else if (error.message.includes("environment variable")) {
+      throw error; // Re-throw env variable errors as-is
+    } else {
+      console.error("⚠️  Unknown email error!");
+      throw new Error(`Failed to send reset email: ${error.message}`);
+    }
   }
 };
 
-module.exports = { register, login, forgotPassword, resetPassword };
+module.exports = { sendPasswordResetEmail };
