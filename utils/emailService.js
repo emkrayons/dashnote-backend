@@ -1,17 +1,12 @@
-const nodemailer = require("nodemailer");
+const { Resend } = require('resend');
 
-// Send password reset email
+// Send password reset email using Resend
 const sendPasswordResetEmail = async (email, resetToken) => {
   try {
     // Validate environment variables
-    if (!process.env.EMAIL_USER) {
-      console.error("❌ EMAIL_USER is not set!");
-      throw new Error("EMAIL_USER environment variable is not configured");
-    }
-    
-    if (!process.env.EMAIL_PASSWORD) {
-      console.error("❌ EMAIL_PASSWORD is not set!");
-      throw new Error("EMAIL_PASSWORD environment variable is not configured");
+    if (!process.env.RESEND_API_KEY) {
+      console.error("❌ RESEND_API_KEY is not set!");
+      throw new Error("RESEND_API_KEY environment variable is not configured");
     }
     
     if (!process.env.FRONTEND_URL) {
@@ -20,32 +15,21 @@ const sendPasswordResetEmail = async (email, resetToken) => {
     }
 
     console.log("✅ Environment variables check:");
-    console.log("  - EMAIL_USER:", process.env.EMAIL_USER);
-    console.log("  - EMAIL_PASSWORD:", process.env.EMAIL_PASSWORD ? "Set (hidden)" : "NOT SET");
+    console.log("  - RESEND_API_KEY:", process.env.RESEND_API_KEY ? "Set (hidden)" : "NOT SET");
     console.log("  - FRONTEND_URL:", process.env.FRONTEND_URL);
 
-    // Create transporter with better config
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD.replace(/\s/g, ''), // Remove any spaces
-      },
-      debug: true, // Enable debug output
-      logger: true, // Log to console
-    });
-
-    // Verify transporter configuration
-    console.log("🔍 Verifying email configuration...");
-    await transporter.verify();
-    console.log("✅ Email transporter verified successfully");
+    // Initialize Resend
+    const resend = new Resend(process.env.RESEND_API_KEY);
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
-    const mailOptions = {
-      from: `"Dashnote" <${process.env.EMAIL_USER}>`,
+    console.log("📧 Sending email via Resend to:", email);
+
+    // Send email
+    const { data, error } = await resend.emails.send({
+      from: 'Dashnote <onboarding@resend.dev>', // Using Resend's free domain
       to: email,
-      subject: "Password Reset - Dashnote",
+      subject: 'Password Reset - Dashnote',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
           <div style="text-align: center; margin-bottom: 30px;">
@@ -116,39 +100,28 @@ const sendPasswordResetEmail = async (email, resetToken) => {
         
         © ${new Date().getFullYear()} Dashnote
       `,
-    };
+    });
 
-    console.log("📧 Sending email to:", email);
-    const info = await transporter.sendMail(mailOptions);
-    
+    if (error) {
+      console.error("❌ Resend error:", error);
+      throw new Error(`Resend API error: ${error.message}`);
+    }
+
     console.log("✅ Password reset email sent successfully!");
-    console.log("  - Message ID:", info.messageId);
+    console.log("  - Email ID:", data.id);
     console.log("  - To:", email);
     console.log("  - Reset URL:", resetUrl);
 
-    return info;
+    return data;
 
   } catch (error) {
     console.error("❌ DETAILED EMAIL ERROR:");
     console.error("  - Error message:", error.message);
-    console.error("  - Error code:", error.code);
-    console.error("  - Error name:", error.name);
-    console.error("  - Full error:", error);
+    console.error("  - Error:", error);
 
-    // Provide specific error messages
-    if (error.code === "EAUTH") {
-      console.error("⚠️  Authentication failed - Check your Gmail App Password!");
-      throw new Error("Email authentication failed. Please check EMAIL_USER and EMAIL_PASSWORD environment variables.");
-    } else if (error.code === "ESOCKET") {
-      console.error("⚠️  Network error - Cannot connect to Gmail servers!");
-      throw new Error("Network error. Unable to connect to email server.");
-    } else if (error.message.includes("Invalid login")) {
-      console.error("⚠️  Invalid credentials - Gmail rejected the login!");
-      throw new Error("Invalid email credentials. Please regenerate your Gmail App Password.");
-    } else if (error.message.includes("environment variable")) {
-      throw error; // Re-throw env variable errors as-is
+    if (error.message.includes("environment variable")) {
+      throw error;
     } else {
-      console.error("⚠️  Unknown email error!");
       throw new Error(`Failed to send reset email: ${error.message}`);
     }
   }
